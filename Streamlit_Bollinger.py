@@ -152,6 +152,13 @@ if results:
     # Add Serial Number starting from 1
     df_result.insert(0, "S.No", range(1, len(df_result) + 1))
 
+    # 🔁 Reorder columns: Signal after Symbol
+    df_result = df_result[
+        ["S.No", "Symbol", "Signal", "Close Price", "Upper Band", "Lower Band"]
+    ]
+
+
+    
     # Format numeric columns to 2 decimals
     for col in ["Close Price", "Upper Band", "Lower Band"]:
         df_result[col] = df_result[col].map(lambda x: f"{x:.2f}")
@@ -171,4 +178,5 @@ if results:
     )
 else:
     st.info("No valid stocks added yet.")
+
 
