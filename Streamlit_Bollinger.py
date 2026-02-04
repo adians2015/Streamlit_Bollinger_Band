@@ -55,8 +55,8 @@ def analyze_stock(symbol, period, multiplier):
     try:
         df = yf.download(
             symbol,
-            period="6mo",
-            interval="1d",
+            period="60d",
+            interval="5m",
             auto_adjust=False,
             progress=False
         )
@@ -171,3 +171,4 @@ if results:
     )
 else:
     st.info("No valid stocks added yet.")
+
