@@ -1,182 +1,88 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
+import pandas_ta as ta
 
 # ---------------- PAGE CONFIG ----------------
-st.set_page_config(
-    page_title="Bollinger Band Signal Dashboard",
-    layout="wide"
-)
+st.set_page_config(page_title="5m Intraday Signal", layout="wide")
 
-st.title("📊 Bollinger Band Buy / Sell Signal Dashboard")
-
-st.markdown("""
-### Signal Logic
-- 🟢 **BUY**  → Close price below Lower Band  
-- 🔴 **SELL** → Close price above Upper Band  
-- ⚪ **HOLD** → Otherwise  
-""")
-
-# ---------------- BOLLINGER SETTINGS (TOP) ----------------
-st.subheader("⚙️ Bollinger Band Settings")
-
-col_a, col_b = st.columns(2)
-
-with col_a:
-    period = st.number_input(
-        "Length (Period)",
-        min_value=5,
-        max_value=50,
-        value=20,
-        step=1
-    )
-
-with col_b:
-    multiplier = st.number_input(
-        "Multiplier (Std Dev)",
-        min_value=1.0,
-        max_value=3.0,
-        value=2.0,
-        step=0.1
-    )
-
-st.divider()
+st.title("⚡ 5-Minute Intraday Dashboard")
+st.caption("Strategy: Price > EMA30 + SMA20 + VWAP")
 
 # ---------------- SESSION STATE ----------------
 if "symbols" not in st.session_state:
-    st.session_state.symbols = []
+    st.session_state.symbols = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS"]
 
-if "refresh" not in st.session_state:
-    st.session_state.refresh = 0  # dummy trigger for refresh
-
-# ---------------- CORE FUNCTION ----------------
-def analyze_stock(symbol, period, multiplier):
+# ---------------- CORE CALCULATION ----------------
+def analyze_stock(symbol):
     try:
-        df = yf.download(
-            symbol,
-            period="60d",
-            interval="5m",
-            auto_adjust=False,
-            progress=False
-        )
+        # Fetching 5m data. '5d' period ensures we have enough candles for EMA30
+        df = yf.download(symbol, period="5d", interval="5m", progress=False)
+        
+        if df.empty or len(df) < 35:
+            return None
 
+        # Fix Multi-index columns for yfinance v0.2.x+
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-        df = df.dropna()
-
-        if df.empty or "Close" not in df.columns or len(df) < period:
-            return None
-
-        # Bollinger Bands
-        df["MA"] = df["Close"].rolling(period).mean()
-        df["STD"] = df["Close"].rolling(period).std()
-        df["Upper Band"] = df["MA"] + (multiplier * df["STD"])
-        df["Lower Band"] = df["MA"] - (multiplier * df["STD"])
+        # Indicators
+        df["EMA30"] = ta.ema(df["Close"], length=30)
+        df["MA20"] = ta.sma(df["Close"], length=20)
+        # VWAP typically resets daily in intraday charts
+        df["VWAP"] = ta.vwap(df["High"], df["Low"], df["Close"], df["Volume"])
 
         last = df.iloc[-1]
+        price = float(last["Close"])
+        e30 = float(last["EMA30"])
+        m20 = float(last["MA20"])
+        vwap = float(last["VWAP"])
 
-        if pd.isna(last["Upper Band"]) or pd.isna(last["Lower Band"]):
-            return None
-
-        # ---------------- SIGNAL LOGIC ----------------
-        if last["Close"] > last["Upper Band"]:
-            signal = "SELL"
-        elif last["Close"] < last["Lower Band"]:
-            signal = "BUY"
+        # Signal Logic
+        if price > e30 and price > m20 and price > vwap:
+            signal, color = "BUY", "green"
+        elif price < e30 and price < m20 and price < vwap:
+            signal, color = "SELL", "red"
         else:
-            signal = "HOLD"
+            signal, color = "NEUTRAL", "gray"
 
         return {
             "Symbol": symbol,
-            "Close Price": round(float(last["Close"]), 2),
-            "Upper Band": round(float(last["Upper Band"]), 2),
-            "Lower Band": round(float(last["Lower Band"]), 2),
-            "Signal": signal
+            "Price": round(price, 2),
+            "EMA30": round(e30, 2),
+            "MA20": round(m20, 2),
+            "VWAP": round(vwap, 2),
+            "Signal": signal,
+            "Color": color
         }
-
     except:
         return None
 
-# ---------------- INPUT FORM ----------------
-with st.form("add_stock_form", clear_on_submit=True):
-    col1, col2 = st.columns([3, 1])
+# ---------------- MOBILE UI: METRIC CARDS ----------------
+# Force a refresh button for mobile users
+if st.button("🔄 Refresh Signals"):
+    st.rerun()
 
-    with col1:
-        stock_symbol = st.text_input(
-            "Enter Stock Symbol",
-            placeholder="Example: RELIANCE.NS"
-        )
-
-    with col2:
-        submitted = st.form_submit_button("➕ Add Stock")
-
-# ---------------- ADD STOCK WITH VALIDATION ----------------
-if submitted:
-    if not stock_symbol:
-        st.warning("Please enter a stock symbol.")
-    else:
-        stock_symbol = stock_symbol.strip().upper()
-
-        if stock_symbol in st.session_state.symbols:
-            st.warning("Stock already added.")
-        else:
-            test_data = analyze_stock(stock_symbol, period, multiplier)
-            if test_data is None:
-                st.warning("❌ Invalid stock symbol or no data available.")
-            else:
-                st.session_state.symbols.append(stock_symbol)
-
-# ---------------- DASHBOARD REFRESH BUTTON ----------------
-col_r1, col_r2 = st.columns([2, 8])
-with col_r1:
-    if st.button("🔄 Refresh Dashboard"):
-        st.session_state.refresh += 1  # trigger recalculation
-
-# ---------------- DASHBOARD CALCULATION ----------------
 results = []
-
-# Trigger refresh
-_ = st.session_state.refresh
-
 for sym in st.session_state.symbols:
-    data = analyze_stock(sym, period, multiplier)
-    if data:
-        results.append(data)
+    res = analyze_stock(sym)
+    if res:
+        results.append(res)
 
-# ---------------- DISPLAY DASHBOARD WITH SERIAL NUMBER ----------------
 if results:
-    df_result = pd.DataFrame(results)
-
-    # Add Serial Number starting from 1
-    df_result.insert(0, "S.No", range(1, len(df_result) + 1))
-
-    # 🔁 Reorder columns: Signal after Symbol
-    df_result = df_result[
-        ["S.No", "Symbol", "Signal", "Close Price", "Upper Band", "Lower Band"]
-    ]
-
-
-    
-    # Format numeric columns to 2 decimals
-    for col in ["Close Price", "Upper Band", "Lower Band"]:
-        df_result[col] = df_result[col].map(lambda x: f"{x:.2f}")
-
-    # Highlight signals
-    def highlight_signal(val):
-        if val == "BUY":
-            return "background-color: lightgreen"
-        elif val == "SELL":
-            return "background-color: lightcoral"
-        return ""
-
-    st.subheader("📌 Live Dashboard")
-    st.dataframe(
-        df_result.style.applymap(highlight_signal, subset=["Signal"]),
-        use_container_width=True
-    )
+    # Card view is best for mobile screens
+    for item in results:
+        with st.container(border=True):
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.markdown(f"### {item['Symbol']}")
+                st.write(f"**Price:** {item['Price']}")
+            with col2:
+                # Big Signal Label
+                st.markdown(f"<h2 style='text-align:center; color:{item['Color']};'>{item['Signal']}</h2>", unsafe_allow_html=True)
+            
+            # Indicator breakdown in small text
+            st.caption(f"EMA30: {item['EMA30']} | MA20: {item['MA20']} | VWAP: {item['VWAP']}")
 else:
-    st.info("No valid stocks added yet.")
-
-
+    st.error("Could not fetch data. Check your internet or tickers.")
+    
