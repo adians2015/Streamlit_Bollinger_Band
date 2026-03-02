@@ -4,32 +4,51 @@ import pandas as pd
 import pandas_ta as ta
 
 # ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="5m Intraday Signal", layout="wide")
+st.set_page_config(page_title="Nifty 100 Intraday", layout="wide")
 
-st.title("⚡ 5-Minute Intraday Dashboard")
-st.caption("Strategy: Price > EMA30 + SMA20 + VWAP")
+st.title("⚡ 5m Intraday Signal Dashboard")
 
-# ---------------- SESSION STATE ----------------
+# ---------------- SESSION STATE (Storage) ----------------
+# This keeps your list active even when the app reruns
 if "symbols" not in st.session_state:
-    st.session_state.symbols = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS"]
+    st.session_state.symbols = ["RELIANCE.NS", "TCS.NS"]
+
+# ---------------- USER INPUT SECTION ----------------
+with st.sidebar:
+    st.header("🔍 Add Stocks")
+    st.caption("Use .NS for NSE (e.g., INFIBEAM.NS)")
+    
+    # Form prevents the app from rerunning on every single keystroke
+    with st.form("symbol_form", clear_on_submit=True):
+        new_sym = st.text_input("Enter Symbol").upper().strip()
+        add_btn = st.form_submit_button("➕ Add to List")
+        
+    if add_btn and new_sym:
+        if new_sym not in st.session_state.symbols:
+            st.session_state.symbols.append(new_sym)
+            st.success(f"Added {new_sym}")
+        else:
+            st.warning("Symbol already exists")
+
+    if st.button("🗑️ Clear All Stocks"):
+        st.session_state.symbols = []
+        st.rerun()
 
 # ---------------- CORE CALCULATION ----------------
 def analyze_stock(symbol):
     try:
-        # Fetching 5m data. '5d' period ensures we have enough candles for EMA30
+        # Fetching 5m data for the last 5 days
         df = yf.download(symbol, period="5d", interval="5m", progress=False)
         
         if df.empty or len(df) < 35:
             return None
 
-        # Fix Multi-index columns for yfinance v0.2.x+
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-        # Indicators
+        # Indicator Logic
         df["EMA30"] = ta.ema(df["Close"], length=30)
         df["MA20"] = ta.sma(df["Close"], length=20)
-        # VWAP typically resets daily in intraday charts
         df["VWAP"] = ta.vwap(df["High"], df["Low"], df["Close"], df["Volume"])
 
         last = df.iloc[-1]
@@ -38,51 +57,43 @@ def analyze_stock(symbol):
         m20 = float(last["MA20"])
         vwap = float(last["VWAP"])
 
-        # Signal Logic
+        # Strategy Logic
         if price > e30 and price > m20 and price > vwap:
-            signal, color = "BUY", "green"
+            sig, col = "BUY", "#00FF00" # Bright Green
         elif price < e30 and price < m20 and price < vwap:
-            signal, color = "SELL", "red"
+            sig, col = "SELL", "#FF4B4B" # Bright Red
         else:
-            signal, color = "NEUTRAL", "gray"
+            sig, col = "NEUTRAL", "#808080" # Gray
 
         return {
             "Symbol": symbol,
             "Price": round(price, 2),
-            "EMA30": round(e30, 2),
-            "MA20": round(m20, 2),
-            "VWAP": round(vwap, 2),
-            "Signal": signal,
-            "Color": color
+            "Signal": sig,
+            "Color": col,
+            "Details": f"EMA30: {round(e30,2)} | MA20: {round(m20,2)} | VWAP: {round(vwap,2)}"
         }
     except:
         return None
 
-# ---------------- MOBILE UI: METRIC CARDS ----------------
-# Force a refresh button for mobile users
-if st.button("🔄 Refresh Signals"):
+# ---------------- DISPLAY DASHBOARD ----------------
+if st.button("🔄 Refresh All Signals"):
     st.rerun()
 
-results = []
-for sym in st.session_state.symbols:
-    res = analyze_stock(sym)
-    if res:
-        results.append(res)
-
-if results:
-    # Card view is best for mobile screens
-    for item in results:
-        with st.container(border=True):
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.markdown(f"### {item['Symbol']}")
-                st.write(f"**Price:** {item['Price']}")
-            with col2:
-                # Big Signal Label
-                st.markdown(f"<h2 style='text-align:center; color:{item['Color']};'>{item['Signal']}</h2>", unsafe_allow_html=True)
-            
-            # Indicator breakdown in small text
-            st.caption(f"EMA30: {item['EMA30']} | MA20: {item['MA20']} | VWAP: {item['VWAP']}")
+if st.session_state.symbols:
+    # Displaying results in mobile-friendly containers
+    for sym in st.session_state.symbols:
+        data = analyze_stock(sym)
+        if data:
+            with st.container(border=True):
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    st.subheader(data["Symbol"])
+                    st.write(f"**Current Price:** ₹{data['Price']}")
+                with c2:
+                    st.markdown(f"<h3 style='text-align:right; color:{data['Color']};'>{data['Signal']}</h3>", unsafe_allow_html=True)
+                st.caption(data["Details"])
+        else:
+            st.error(f"Could not load {sym}. Check ticker name.")
 else:
-    st.error("Could not fetch data. Check your internet or tickers.")
+    st.info("Your watchlist is empty. Add a symbol from the sidebar (e.g., SBIN.NS)")
     
